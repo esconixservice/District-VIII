@@ -113,30 +113,80 @@ describe("bookings service (double-booking protection)", () => {
     expect(await AdminBookingNotificationModel.countDocuments({ bookingId: poolBooking.id })).toBe(1);
   });
 
-  it("uses the current hourly gaming rate for new bookings and preserves historical estimates", async () => {
+  it("uses the current hourly gaming rate times the booked length and preserves historical estimates", async () => {
     const previousSettings = await getSettings();
     try {
-      await updateSettings({ slotDurationHours: 2, ps5PricePerHour: 100, poolPricePerHour: 10 });
+      await updateSettings({ ps5PricePerHour: 100, poolPricePerHour: 10 });
       const firstPs5 = await createBooking({ ...request(18), unitId: ps5UnitId }, "online");
-      expect(firstPs5).toMatchObject({ pricePerHour: 100, estimatedAmount: 200 });
+      expect(firstPs5).toMatchObject({ pricePerHour: 100, estimatedAmount: 100, durationHours: 1 });
       const approved = await approveBooking(firstPs5.id);
-      expect(approved).toMatchObject({ status: "approved", pricePerHour: 100, estimatedAmount: 200 });
+      expect(approved).toMatchObject({ status: "approved", pricePerHour: 100, estimatedAmount: 100 });
 
       await updateSettings({ ps5PricePerHour: 40 });
-      const secondPs5 = await createBooking({ ...request(20), unitId: ps5UnitId }, "online");
+      const halfHourPs5 = await createBooking({ ...request(20), durationHours: 0.5, unitId: ps5UnitId }, "online");
       const pool = await createBooking(request(18), "walk-in");
-      expect(secondPs5).toMatchObject({ pricePerHour: 40, estimatedAmount: 80 });
-      expect(pool).toMatchObject({ pricePerHour: 10, estimatedAmount: 20, status: "approved" });
+      expect(halfHourPs5).toMatchObject({ pricePerHour: 40, estimatedAmount: 20, durationHours: 0.5 });
+      expect(pool).toMatchObject({ pricePerHour: 10, estimatedAmount: 10, status: "approved" });
 
       const savedHistoricalBooking = await BookingModel.findById(firstPs5.id).lean().exec();
-      expect(savedHistoricalBooking).toMatchObject({ pricePerHour: 100, estimatedAmount: 200 });
+      expect(savedHistoricalBooking).toMatchObject({ pricePerHour: 100, estimatedAmount: 100 });
     } finally {
       await updateSettings({
-        slotDurationHours: previousSettings.slotDurationHours,
         ps5PricePerHour: previousSettings.ps5PricePerHour,
         poolPricePerHour: previousSettings.poolPricePerHour,
       });
     }
+  });
+
+  it("books half hours and rejects any overlap between 30-minute and 1-hour bookings", async () => {
+    const halfAt830 = await createBooking({ ...request(20.5), durationHours: 0.5 }, "online");
+    expect(halfAt830).toMatchObject({ startHour: 20.5, durationHours: 0.5 });
+    expect(new Date(halfAt830.endsAt).getTime() - new Date(halfAt830.startsAt).getTime()).toBe(30 * 60_000);
+
+    // 8:00 for 30 min sits right before it: fine.
+    await expect(createBooking({ ...request(20), durationHours: 0.5 }, "online")).resolves.toMatchObject({ startHour: 20 });
+    // 7:30 for 1 hour would run into 8:00: taken.
+    await expectHttpError(createBooking({ ...request(19.5), durationHours: 1 }, "online"), 409);
+    // 8:30 again: taken.
+    await expectHttpError(createBooking({ ...request(20.5), durationHours: 1 }, "online"), 409);
+    // 9:00 for 1 hour is clear.
+    await expect(createBooking(request(21), "online")).resolves.toMatchObject({ durationHours: 1 });
+    expect(await BookingModel.countDocuments()).toBe(3);
+  });
+
+  it("lets exactly one of concurrent overlapping 1-hour and 30-minute requests win", async () => {
+    const attempts = [
+      createBooking({ ...request(19.5), durationHours: 1 }, "online"),
+      createBooking({ ...request(20), durationHours: 1 }, "online"),
+      createBooking({ ...request(20), durationHours: 0.5 }, "online"),
+    ];
+    const results = await Promise.allSettled(attempts);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  });
+
+  it("guards against bookings made before half-hour slots (no cells yet)", async () => {
+    const unit = await UnitModel.findById(unitId).lean().exec();
+    await BookingModel.collection.insertOne({
+      unitId: unit!._id,
+      unitType: "pool",
+      businessDate: tomorrow,
+      startHour: 20,
+      durationHours: 1,
+      startsAt: new Date(),
+      customerName: "Legacy",
+      customerPhone: "9876543210",
+      status: "approved",
+      source: "online",
+    });
+    await expectHttpError(createBooking({ ...request(20.5), durationHours: 0.5 }, "online"), 409);
+    await expect(createBooking({ ...request(21), durationHours: 0.5 }, "online")).resolves.toMatchObject({ startHour: 21 });
+  });
+
+  it("refuses a 1-hour booking that would run past closing and defaults old clients to 1 hour", async () => {
+    // Default hours close at 4 AM, so 3:30 only has room for 30 minutes.
+    await expectHttpError(createBooking({ ...request(3.5), durationHours: 1 }, "online"), 400);
+    await expect(createBooking({ ...request(3.5), durationHours: 0.5 }, "online")).resolves.toMatchObject({ durationHours: 0.5 });
+    await expect(createBooking(request(2), "online")).resolves.toMatchObject({ durationHours: 1 });
   });
 
   it("keeps a saved booking successful if push configuration or delivery fails", async () => {

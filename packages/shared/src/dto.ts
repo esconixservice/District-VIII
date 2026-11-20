@@ -92,7 +92,10 @@ export interface BookingDto {
 export interface CreateBookingInput {
   unitId: string;
   businessDate: IsoDate;
+  /** Clock hour the booking starts at; may end in .5 (20.5 = 8:30 PM). */
   startHour: number;
+  /** 0.5 or 1. Defaults to 1 when omitted (older clients). */
+  durationHours?: number;
   customerName: string;
   customerPhone: string;
 }

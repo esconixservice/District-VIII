@@ -2,6 +2,7 @@
 
 import {
   type BookingDto,
+  formatDuration,
   type IsoDate,
   normalizePhone,
   validateCustomerName,
@@ -22,6 +23,8 @@ export interface SlotSelection {
   unitName: string;
   businessDate: IsoDate;
   startHour: number;
+  /** 0.5 or 1. */
+  durationHours: number;
   dateLabel: string;
   timeLabel: string;
 }
@@ -71,6 +74,7 @@ export function BookingForm({ selection, profile, onBooked, onPickAnother }: Boo
       unitId: selection.unitId,
       businessDate: selection.businessDate,
       startHour: selection.startHour,
+      durationHours: selection.durationHours,
       customerName: name.trim(),
       customerPhone: normalizePhone(phone) ?? phone,
     });
@@ -82,7 +86,7 @@ export function BookingForm({ selection, profile, onBooked, onPickAnother }: Boo
         {[
           ["Unit", selection.unitName],
           ["Date", selection.dateLabel],
-          ["Time", selection.timeLabel],
+          ["Time", `${selection.timeLabel} · ${formatDuration(selection.durationHours)}`],
         ].map(([term, value]) => (
           <div key={term} className="min-w-0">
             <dt className="text-[10px] font-bold tracking-[0.2em] text-blush uppercase">{term}</dt>

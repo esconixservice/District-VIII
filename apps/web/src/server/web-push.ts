@@ -2,7 +2,7 @@ import "server-only";
 
 import { after } from "next/server";
 import * as webpush from "web-push";
-import type { BookingDto } from "@district-viii/shared";
+import { type BookingDto, formatSlotRange } from "@district-viii/shared";
 import { AdminDeviceSubscriptionModel } from "./models";
 
 interface VapidConfig {
@@ -52,7 +52,7 @@ export async function deliverBookingPush(
   const statusFilter = booking.status === "pending" ? "?status=pending" : "";
   const payload = JSON.stringify({
     title: `New ${typeName} Booking`,
-    body: `A customer booked ${booking.unitName} for ${booking.businessDate} at ${String(booking.startHour).padStart(2, "0")}:00. Tap to view booking details.`,
+    body: `A customer booked ${booking.unitName} for ${booking.businessDate}, ${formatSlotRange(booking.startHour, booking.durationHours)}. Tap to view booking details.`,
     url: `/admin/bookings${statusFilter}`,
     bookingId: booking.id,
   });

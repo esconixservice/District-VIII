@@ -2,15 +2,17 @@ import "server-only";
 
 import {
   type BlockedSlotDto,
+  cellOf,
   type CreateBlockedSlotInput,
   type IsoDate,
   isOperatingSlot,
   SLOT_HOLDING_STATUSES,
+  slotCells,
 } from "@district-viii/shared";
 import type { FilterQuery } from "mongoose";
 import { badRequest, conflict, isDuplicateKeyError, notFound } from "../http";
 import { bumpLive } from "../live";
-import { type BlockedSlot, BlockedSlotModel, type BlockedSlotRecord, BookingModel } from "../models";
+import { type BlockedSlot, BlockedSlotModel, type BlockedSlotRecord, BookingModel, type BookingRecord } from "../models";
 import { getSettings } from "./settings";
 import { getUnit, unitNames } from "./units";
 
@@ -41,12 +43,16 @@ export async function blockSlot(input: CreateBlockedSlotInput): Promise<BlockedS
   const unit = await getUnit(input.unitId);
   const settings = await getSettings();
   if (!isOperatingSlot(input.startHour, settings)) throw badRequest("That time is outside operating hours");
-  const held = await BookingModel.exists({
-    unitId: unit._id,
-    businessDate: input.businessDate,
-    startHour: input.startHour,
-    status: { $in: SLOT_HOLDING_STATUSES },
-  }).exec();
+  // Any active booking covering this 30-minute cell (bookings made before
+  // half-hour slots have no `cells`, so derive theirs from start and length).
+  const cell = cellOf(input.startHour);
+  const active = await BookingModel.find(
+    { unitId: unit._id, businessDate: input.businessDate, status: { $in: SLOT_HOLDING_STATUSES } },
+    { startHour: 1, durationHours: 1, cells: 1 },
+  )
+    .lean<Pick<BookingRecord, "startHour" | "durationHours" | "cells">[]>()
+    .exec();
+  const held = active.some((row) => (row.cells ?? slotCells(row.startHour, row.durationHours ?? 1)).includes(cell));
   if (held) throw conflict("This slot already has a booking. Cancel or reject it first.");
 
   try {

@@ -199,7 +199,7 @@ export const openApiDocument = {
           properties: {
             unitId: { type: "string" },
             businessDate: isoDate,
-            startHour: { type: "integer", minimum: 0, maximum: 23 },
+            startHour: { type: "number", minimum: 0, maximum: 23.5, multipleOf: 0.5, description: "Clock hour; 20.5 = 8:30 PM" },
             reason: { type: "string" },
           },
         }),
@@ -390,7 +390,7 @@ export const openApiDocument = {
                   items: {
                     type: "object",
                     properties: {
-                      startHour: { type: "integer" },
+                      startHour: { type: "number" },
                       startsAt: { type: "string", format: "date-time" },
                       endsAt: { type: "string", format: "date-time" },
                       state: { type: "string", enum: ["available", "pending", "booked", "busy", "maintenance", "past"] },
@@ -409,7 +409,8 @@ export const openApiDocument = {
         properties: {
           unitId: { type: "string" },
           businessDate: isoDate,
-          startHour: { type: "integer", minimum: 0, maximum: 23 },
+          startHour: { type: "number", minimum: 0, maximum: 23.5, multipleOf: 0.5, description: "Clock hour; 20.5 = 8:30 PM" },
+          durationHours: { type: "number", enum: [0.5, 1], default: 1 },
           customerName: { type: "string", minLength: 2, maxLength: 60 },
           customerPhone: { type: "string", example: "+91 98765 43210" },
         },
@@ -422,8 +423,8 @@ export const openApiDocument = {
           unitName: { type: "string" },
           unitType,
           businessDate: isoDate,
-          startHour: { type: "integer" },
-          durationHours: { type: "integer" },
+          startHour: { type: "number" },
+          durationHours: { type: "number" },
           startsAt: { type: "string", format: "date-time" },
           endsAt: { type: "string", format: "date-time" },
           customerName: { type: "string" },
@@ -464,7 +465,7 @@ export const openApiDocument = {
           unitId: { type: "string" },
           unitName: { type: "string" },
           businessDate: isoDate,
-          startHour: { type: "integer" },
+          startHour: { type: "number" },
           reason: { type: "string" },
           createdAt: { type: "string", format: "date-time" },
         },

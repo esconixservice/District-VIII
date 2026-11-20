@@ -9,6 +9,7 @@
     "lint": "eslint",
     "prebuild": "npm run build -w @district-viii/shared",
     "seed": "tsx --conditions=react-server scripts/seed.ts",
+    "migrate:half-hour": "tsx --conditions=react-server scripts/migrate-half-hour-slots.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

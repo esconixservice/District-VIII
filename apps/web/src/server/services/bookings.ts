@@ -7,13 +7,19 @@ import {
   type BookingSource,
   type BookingStatus,
   businessDateOf,
+  coveredStartHours,
   type CreateBookingInput,
+  DEFAULT_BOOKING_DURATION,
   diffDays,
+  fitsInSession,
   HOUR_MS,
+  isBookingDuration,
   isOperatingSlot,
   isSlotPast,
   maskPhone,
   type Paginated,
+  SLOT_HOLDING_STATUSES,
+  slotCells,
   slotStart,
 } from "@district-viii/shared";
 import type { FilterQuery, SortOrder } from "mongoose";
@@ -73,7 +79,12 @@ export async function createBooking(input: CreateBookingInput, source: BookingSo
   if (!unit.isActive) throw badRequest("This unit is not open for booking");
   const status = effectiveStatus(unit, at);
   if (status === "maintenance") throw conflict(`${unit.name} is under maintenance`);
+  const durationHours = input.durationHours ?? DEFAULT_BOOKING_DURATION;
+  if (!isBookingDuration(durationHours)) throw badRequest("Bookings can be 30 minutes or 1 hour");
   if (!isOperatingSlot(input.startHour, settings)) throw badRequest("That time is outside operating hours");
+  if (!fitsInSession(input.startHour, durationHours, settings)) {
+    throw badRequest("That booking would run past closing time. Pick an earlier slot or 30 minutes.");
+  }
 
   const dayOffset = diffDays(businessDateOf(at, settings), input.businessDate);
   const maxOffset = source === "online" ? settings.bookingWindowDays - 1 : ADMIN_BOOKING_DAYS_AHEAD;
@@ -87,7 +98,7 @@ export async function createBooking(input: CreateBookingInput, source: BookingSo
 
   const startsAt = slotStart(input.businessDate, input.startHour, settings);
   const pricePerHour = unit.type === "ps5" ? settings.ps5PricePerHour : settings.poolPricePerHour;
-  const estimatedAmount = pricePerHour === null ? null : Number((pricePerHour * settings.slotDurationHours).toFixed(2));
+  const estimatedAmount = pricePerHour === null ? null : Number((pricePerHour * durationHours).toFixed(2));
   if (isSlotPast(startsAt, at)) throw badRequest("This slot has already started");
   if (status === "busy" && unit.busyUntil && unit.busyUntil > startsAt) {
     throw conflict(`${unit.name} is in use at that time`);
@@ -95,9 +106,22 @@ export async function createBooking(input: CreateBookingInput, source: BookingSo
   const blocked = await BlockedSlotModel.exists({
     unitId: unit._id,
     businessDate: input.businessDate,
-    startHour: input.startHour,
+    startHour: { $in: coveredStartHours(input.startHour, durationHours) },
   }).exec();
   if (blocked) throw conflict("This slot is not available");
+
+  // Bookings made before half-hour slots have no `cells`, so the unique cell
+  // index can't see them until the migration backfills them. Check by hand.
+  const wanted = new Set(slotCells(input.startHour, durationHours));
+  const legacy = await BookingModel.find(
+    { unitId: unit._id, businessDate: input.businessDate, status: { $in: SLOT_HOLDING_STATUSES }, cells: { $exists: false } },
+    { startHour: 1, durationHours: 1 },
+  )
+    .lean<Pick<BookingRecord, "startHour" | "durationHours">[]>()
+    .exec();
+  if (legacy.some((row) => slotCells(row.startHour, row.durationHours ?? 1).some((cell) => wanted.has(cell)))) {
+    throw conflict(SLOT_TAKEN_MESSAGE);
+  }
 
   let created: BookingRecord;
   try {
@@ -106,7 +130,8 @@ export async function createBooking(input: CreateBookingInput, source: BookingSo
       unitType: unit.type,
       businessDate: input.businessDate,
       startHour: input.startHour,
-      durationHours: settings.slotDurationHours,
+      durationHours,
+      cells: slotCells(input.startHour, durationHours),
       startsAt,
       customerName: input.customerName,
       customerPhone: input.customerPhone,

@@ -56,19 +56,61 @@ export function isOvernight(hours: OperatingHours): boolean {
   return hours.closeHour <= hours.openHour;
 }
 
-/** Start hours (clock hours, 0 to 23) of every bookable slot in one business session, in order. */
+/** Grid step: every bookable cell is 30 minutes. Start hours may end in .5 (20.5 = 8:30 PM). */
+export const SLOT_STEP_HOURS = 0.5;
+/** Booking lengths customers and admins can choose, in hours. */
+export const BOOKING_DURATIONS = [0.5, 1] as const;
+export type BookingDuration = (typeof BOOKING_DURATIONS)[number];
+export const DEFAULT_BOOKING_DURATION: BookingDuration = 1;
+
+export function isBookingDuration(value: number): value is BookingDuration {
+  return (BOOKING_DURATIONS as readonly number[]).includes(value);
+}
+
+/** Normalizes a clock hour (may be fractional) into [0, 24). */
+function wrapHour(hour: number): number {
+  return ((hour % 24) + 24) % 24;
+}
+
+/** Hours in one business session (24 when open round the clock). */
+export function sessionSpanHours(hours: OperatingHours): number {
+  return isOvernight(hours) ? 24 - hours.openHour + hours.closeHour : hours.closeHour - hours.openHour;
+}
+
+/** Start hours of every 30-minute cell in one business session, in order. */
 export function slotHours(hours: OperatingHours): number[] {
-  const span = isOvernight(hours) ? 24 - hours.openHour + hours.closeHour : hours.closeHour - hours.openHour;
-  const step = Math.max(1, Math.floor(hours.slotDurationHours));
+  const span = sessionSpanHours(hours);
   const result: number[] = [];
-  for (let offset = 0; offset + step <= span; offset += step) {
-    result.push((hours.openHour + offset) % 24);
+  for (let offset = 0; offset + SLOT_STEP_HOURS <= span; offset += SLOT_STEP_HOURS) {
+    result.push(wrapHour(hours.openHour + offset));
   }
   return result;
 }
 
 export function isOperatingSlot(startHour: number, hours: OperatingHours): boolean {
   return slotHours(hours).includes(startHour);
+}
+
+/** True when a booking of `durationHours` starting at `startHour` ends at or before closing. */
+export function fitsInSession(startHour: number, durationHours: number, hours: OperatingHours): boolean {
+  if (!isOperatingSlot(startHour, hours)) return false;
+  return wrapHour(startHour - hours.openHour) + durationHours <= sessionSpanHours(hours);
+}
+
+/** Start hours of the 30-minute cells a booking covers: 20 for 1 h -> [20, 20.5]. */
+export function coveredStartHours(startHour: number, durationHours: number): number[] {
+  const count = Math.max(1, Math.round(durationHours / SLOT_STEP_HOURS));
+  return Array.from({ length: count }, (_, index) => wrapHour(startHour + index * SLOT_STEP_HOURS));
+}
+
+/** Clock-based cell id (0 to 47) of a 30-minute cell: 20.5 -> 41. Stable even if opening hours change. */
+export function cellOf(startHour: number): number {
+  return Math.round(wrapHour(startHour) / SLOT_STEP_HOURS) % 48;
+}
+
+/** Cell ids a booking occupies; stored on bookings for the overlap guard. */
+export function slotCells(startHour: number, durationHours: number): number[] {
+  return coveredStartHours(startHour, durationHours).map(cellOf);
 }
 
 /**
@@ -87,10 +129,10 @@ export function slotStart(businessDate: IsoDate, startHour: number, hours: Opera
 }
 
 export function slotEnd(businessDate: IsoDate, startHour: number, hours: OperatingHours): Date {
-  return new Date(slotStart(businessDate, startHour, hours).getTime() + hours.slotDurationHours * HOUR_MS);
+  return new Date(slotStart(businessDate, startHour, hours).getTime() + SLOT_STEP_HOURS * HOUR_MS);
 }
 
-/** The slot running at `instant`, or null when the arena is closed. */
+/** The 30-minute cell running at `instant`, or null when the arena is closed. */
 export function currentSlot(
   instant: Date | number,
   hours: OperatingHours,
@@ -99,7 +141,7 @@ export function currentSlot(
   const time = +instant;
   for (const startHour of slotHours(hours)) {
     const start = slotStart(businessDate, startHour, hours).getTime();
-    if (time >= start && time < start + hours.slotDurationHours * HOUR_MS) {
+    if (time >= start && time < start + SLOT_STEP_HOURS * HOUR_MS) {
       return { businessDate, startHour };
     }
   }
@@ -117,12 +159,20 @@ export function bookableDates(instant: Date | number, hours: OperatingHours, win
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** 20 -> "8 PM", 0 -> "12 AM". */
+/** 20 -> "8 PM", 20.5 -> "8:30 PM", 0 -> "12 AM". */
 export function formatHour(hour: number): string {
-  const normalized = ((hour % 24) + 24) % 24;
-  const suffix = normalized < 12 ? "AM" : "PM";
-  const display = normalized % 12 === 0 ? 12 : normalized % 12;
-  return `${display} ${suffix}`;
+  const totalMinutes = Math.round(wrapHour(hour) * 60) % (24 * 60);
+  const whole = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const suffix = whole < 12 ? "AM" : "PM";
+  const display = whole % 12 === 0 ? 12 : whole % 12;
+  return minutes === 0 ? `${display} ${suffix}` : `${display}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+/** 0.5 -> "30 min", 1 -> "1 hr", 2 -> "2 hrs". */
+export function formatDuration(durationHours: number): string {
+  if (durationHours < 1) return `${Math.round(durationHours * 60)} min`;
+  return durationHours === 1 ? "1 hr" : `${durationHours} hrs`;
 }
 
 export function formatSlotRange(startHour: number, durationHours: number): string {
@@ -153,7 +203,7 @@ export function formatBusinessDate(date: IsoDate, today: IsoDate): string {
 }
 
 /** A slot stays bookable this long after it starts, so someone walking in at 8:10 can still take the 8 PM slot. */
-export const LATE_BOOKING_GRACE_MINUTES = 30;
+export const LATE_BOOKING_GRACE_MINUTES = 15;
 
 /** True once a slot can no longer be booked. */
 export function isSlotPast(startsAt: Date | number, instant: Date | number): boolean {

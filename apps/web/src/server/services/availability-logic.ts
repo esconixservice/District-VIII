@@ -1,5 +1,7 @@
 import {
+  coveredStartHours,
   currentSlot,
+  SLOT_STEP_HOURS,
   HOUR_MS,
   type IsoDate,
   isSlotPast,
@@ -28,6 +30,8 @@ export interface SlotHold {
   unitId: string;
   businessDate: IsoDate;
   startHour: number;
+  /** Hours the booking covers; defaults to 1 (bookings made before half-hour slots). */
+  durationHours?: number;
   status: "pending" | "approved";
 }
 
@@ -41,16 +45,19 @@ export function slotKey(unitId: string, businessDate: IsoDate, startHour: number
   return `${unitId}|${businessDate}|${startHour}`;
 }
 
-/** Index holds and blocks by slot key for O(1) lookups. */
+/** Index holds and blocks by 30-minute cell key for O(1) lookups. */
 export class SlotIndex {
   private readonly holds = new Map<string, SlotHold["status"]>();
   private readonly blocks = new Set<string>();
 
   constructor(holds: readonly SlotHold[], blocks: readonly SlotBlock[]) {
     for (const hold of holds) {
-      const key = slotKey(hold.unitId, hold.businessDate, hold.startHour);
-      // Approved wins if both somehow exist.
-      if (this.holds.get(key) !== "approved") this.holds.set(key, hold.status);
+      // A booking holds every cell it covers: a 1-hour booking at 8 PM holds 8:00 and 8:30.
+      for (const startHour of coveredStartHours(hold.startHour, hold.durationHours ?? 1)) {
+        const key = slotKey(hold.unitId, hold.businessDate, startHour);
+        // Approved wins if both somehow exist.
+        if (this.holds.get(key) !== "approved") this.holds.set(key, hold.status);
+      }
     }
     for (const block of blocks) this.blocks.add(slotKey(block.unitId, block.businessDate, block.startHour));
   }
@@ -104,7 +111,7 @@ export function buildSlots(params: {
     return {
       startHour,
       startsAt: startsAt.toISOString(),
-      endsAt: new Date(startsAt.getTime() + hours.slotDurationHours * HOUR_MS).toISOString(),
+      endsAt: new Date(startsAt.getTime() + SLOT_STEP_HOURS * HOUR_MS).toISOString(),
       state: slotState({ ...params, startHour }),
     };
   });
@@ -121,7 +128,7 @@ export function isUnitFreeNow(unit: UnitState, hours: OperatingHours, index: Slo
   );
 }
 
-const MAX_LOOKAHEAD_SLOTS = 48;
+const MAX_LOOKAHEAD_SLOTS = 96;
 
 /**
  * When a unit next becomes free: after its busy time, then past any run of
@@ -139,7 +146,7 @@ export function nextFreeAt(unit: UnitState, hours: OperatingHours, index: SlotIn
       index.hold(unit.id, slot.businessDate, slot.startHour) !== undefined ||
       index.isBlocked(unit.id, slot.businessDate, slot.startHour);
     if (!taken) return cursor;
-    cursor = new Date(slotStart(slot.businessDate, slot.startHour, hours).getTime() + hours.slotDurationHours * HOUR_MS);
+    cursor = new Date(slotStart(slot.businessDate, slot.startHour, hours).getTime() + SLOT_STEP_HOURS * HOUR_MS);
   }
   return cursor;
 }

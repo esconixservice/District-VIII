@@ -28,6 +28,7 @@ interface HoldRow {
   unitId: Types.ObjectId;
   businessDate: string;
   startHour: number;
+  durationHours?: number;
   status: SlotHold["status"];
 }
 
@@ -47,7 +48,7 @@ async function slotIndex(units: readonly UnitRecord[], dates: IsoDate[]): Promis
   const [holds, blocks] = await Promise.all([
     BookingModel.find(
       { unitId: { $in: unitIds }, businessDate: { $in: dates }, status: { $in: SLOT_HOLDING_STATUSES } },
-      { unitId: 1, businessDate: 1, startHour: 1, status: 1 },
+      { unitId: 1, businessDate: 1, startHour: 1, durationHours: 1, status: 1 },
     )
       .lean<HoldRow[]>()
       .exec(),

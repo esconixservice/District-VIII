@@ -86,12 +86,8 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
                 </option>
               ))}
             </SelectField>
-            <SelectField label="Slot length" value={form.slotDurationHours} onChange={(event) => set("slotDurationHours", Number(event.target.value))}>
-              {[1, 2, 3, 4].map((hours) => (
-                <option key={hours} value={hours}>
-                  {hours} hour{hours > 1 ? "s" : ""}
-                </option>
-              ))}
+            <SelectField label="Slot length" value="fixed" disabled hint="Customers choose 30 min or 1 hr when booking">
+              <option value="fixed">30-minute slots</option>
             </SelectField>
             <SelectField
               label="Booking window"
@@ -108,7 +104,7 @@ function SettingsForm({ initial }: { initial: SettingsDto }) {
           </div>
           {preview.length === 0 && (
             <p role="alert" className="text-sm font-semibold text-burgundy-bright">
-              These hours don&apos;t fit a single slot of that length.
+              These hours don&apos;t fit a single 30-minute slot.
             </p>
           )}
           {mutation.isError && (
