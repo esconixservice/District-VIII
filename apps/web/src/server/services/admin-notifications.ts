@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AdminDto, BookingDto } from "@district-viii/shared";
+import { type AdminDto, type BookingDto, formatSlotRange } from "@district-viii/shared";
 import { AdminBookingNotificationModel, type AdminBookingNotificationRecord } from "../models";
 import { bumpLive } from "../live";
 import { scheduleBookingPush } from "../web-push";
@@ -23,7 +23,7 @@ export async function recordAdminBookingNotification(booking: BookingDto): Promi
       $setOnInsert: {
         bookingId: booking.id,
         title: "New Booking Received",
-        message: `${booking.customerName} booked ${booking.unitName} for ${booking.businessDate} at ${booking.startHour}:00.`,
+        message: `${booking.customerName} booked ${booking.unitName} for ${booking.businessDate}, ${formatSlotRange(booking.startHour, booking.durationHours)}.`,
         booking: {
           customerName: booking.customerName,
           unitName: booking.unitName,

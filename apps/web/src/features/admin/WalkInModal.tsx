@@ -2,7 +2,9 @@
 
 import {
   addDays,
+  BOOKING_DURATIONS,
   formatBusinessDate,
+  formatDuration,
   formatSlotRange,
   type IsoDate,
   normalizePhone,
@@ -18,6 +20,7 @@ import { useToast } from "@/components/admin/Toaster";
 import { AdminButton, Field, Segmented, SelectField } from "@/components/admin/ui";
 import { adminApi, adminKeys } from "@/lib/admin-api";
 import { errorMessage } from "@/lib/api-error";
+import { canStartAt } from "@/features/booking/SlotGrid";
 import { useAdminToday } from "./use-admin-today";
 
 const WALK_IN_DAYS = 7;
@@ -33,8 +36,10 @@ export function WalkInModal({ open, onClose }: { open: boolean; onClose: () => v
 function WalkInForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { today, settings } = useAdminToday();
+  const { today } = useAdminToday();
   const [type, setType] = useState<UnitType>("pool");
+  const [duration, setDuration] = useState<"0.5" | "1">("1");
+  const durationHours = Number(duration);
   const [pickedDate, setPickedDate] = useState<IsoDate | null>(null);
   const [unitId, setUnitId] = useState("");
   const [hour, setHour] = useState("");
@@ -50,7 +55,8 @@ function WalkInForm({ onDone }: { onDone: () => void }) {
   });
   const units = availability.data?.units ?? [];
   const unit = units.find((entry) => entry.unit.id === unitId) ?? units.find((entry) => entry.unit.status !== "maintenance");
-  const openSlots = unit?.slots.filter((slot) => slot.state === "available") ?? [];
+  // Start times where every half hour the booking covers is free.
+  const openSlots = unit?.slots.filter((slot) => canStartAt(unit.slots, slot, durationHours)) ?? [];
   const slot = openSlots.find((item) => String(item.startHour) === hour) ?? openSlots[0];
 
   const nameError = submitted ? validateCustomerName(name) : null;
@@ -72,6 +78,7 @@ function WalkInForm({ onDone }: { onDone: () => void }) {
       unitId: unit.unit.id,
       businessDate: date,
       startHour: slot.startHour,
+      durationHours,
       customerName: name.trim(),
       customerPhone: normalizePhone(phone) ?? phone,
     });
@@ -126,16 +133,26 @@ function WalkInForm({ onDone }: { onDone: () => void }) {
           ))}
         </SelectField>
       </div>
+      <Segmented
+        label="Length"
+        layoutId="walk-in-duration"
+        value={duration}
+        onChange={(value) => {
+          setDuration(value);
+          setHour("");
+        }}
+        options={BOOKING_DURATIONS.map((value) => ({ value: String(value) as "0.5" | "1", label: formatDuration(value) }))}
+      />
       <SelectField
         label="Time"
         value={slot ? String(slot.startHour) : ""}
         onChange={(event) => setHour(event.target.value)}
         disabled={openSlots.length === 0}
-        hint={availability.isPending ? "Loading free hours…" : openSlots.length === 0 ? "No free hours for this unit and date" : undefined}
+        hint={availability.isPending ? "Loading free times…" : openSlots.length === 0 ? "No free times for this unit, date and length" : undefined}
       >
         {openSlots.map((item) => (
           <option key={item.startHour} value={item.startHour}>
-            {formatSlotRange(item.startHour, settings?.slotDurationHours ?? 1)}
+            {formatSlotRange(item.startHour, durationHours)}
           </option>
         ))}
       </SelectField>

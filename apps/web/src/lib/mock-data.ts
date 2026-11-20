@@ -3,6 +3,9 @@ import {
   type AvailabilityDto,
   type BookingDto,
   businessDateOf,
+  coveredStartHours,
+  DEFAULT_BOOKING_DURATION,
+  fitsInSession,
   type CreateBookingInput,
   currentSlot,
   diffDays,
@@ -101,7 +104,7 @@ function holdFor(unitId: string, businessDate: IsoDate, startHour: number): Book
     (booking) =>
       booking.unitId === unitId &&
       booking.businessDate === businessDate &&
-      booking.startHour === startHour &&
+      coveredStartHours(booking.startHour, booking.durationHours).includes(startHour) &&
       (booking.status === "pending" || booking.status === "approved"),
   );
 }
@@ -169,7 +172,9 @@ export const mockApi = {
     if (!unit || !phone || !isOperatingSlot(input.startHour, SETTINGS) || offset < 0 || offset >= SETTINGS.bookingWindowDays) {
       throw new ApiError(400, "That slot can't be booked");
     }
-    if (slotStateFor(unit, input.businessDate, input.startHour, now) !== "available") {
+    const durationHours = input.durationHours ?? DEFAULT_BOOKING_DURATION;
+    if (!fitsInSession(input.startHour, durationHours, SETTINGS)) throw new ApiError(400, "That booking would run past closing time");
+    if (coveredStartHours(input.startHour, durationHours).some((hour) => slotStateFor(unit, input.businessDate, hour, now) !== "available")) {
       throw new ApiError(409, "Sorry, someone just requested this slot. Please pick another time.");
     }
     const startsAt = slotStart(input.businessDate, input.startHour, SETTINGS);
@@ -180,9 +185,9 @@ export const mockApi = {
       unitType: unit.type,
       businessDate: input.businessDate,
       startHour: input.startHour,
-      durationHours: 1,
+      durationHours,
       startsAt: startsAt.toISOString(),
-      endsAt: new Date(startsAt.getTime() + HOUR_MS).toISOString(),
+      endsAt: new Date(startsAt.getTime() + durationHours * HOUR_MS).toISOString(),
       customerName: input.customerName.trim(),
       customerPhone: phone,
       pricePerHour: null,

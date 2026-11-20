@@ -63,9 +63,12 @@ export interface Booking {
   unitType: UnitType;
   /** Business session date (YYYY-MM-DD, Asia/Kolkata). 1 AM slots belong to the previous day. */
   businessDate: string;
-  /** Real clock hour the slot starts at, 0 to 23. */
+  /** Real clock hour the booking starts at, 0 to 23.5 in half-hour steps (20.5 = 8:30 PM). */
   startHour: number;
+  /** 0.5 or 1 for new bookings; older bookings may hold other whole hours. */
   durationHours: number;
+  /** Clock-based 30-minute cell ids the booking occupies (see `slotCells`). Missing on bookings made before half-hour slots. */
+  cells?: number[];
   /** Absolute start instant, denormalized for sorting and range queries. */
   startsAt: Date;
   customerName: string;
@@ -86,8 +89,9 @@ const BookingSchema = new Schema<Booking>(
     unitId: { type: Schema.Types.ObjectId, ref: "Unit", required: true },
     unitType: { type: String, required: true, enum: UNIT_TYPES },
     businessDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
-    startHour: { type: Number, required: true, min: 0, max: 23 },
-    durationHours: { type: Number, required: true, min: 1, max: 4, default: 1 },
+    startHour: { type: Number, required: true, min: 0, max: 23.5 },
+    durationHours: { type: Number, required: true, min: 0.5, max: 4, default: 1 },
+    cells: { type: [Number], default: undefined },
     startsAt: { type: Date, required: true },
     customerName: { type: String, required: true, trim: true, minlength: 2, maxlength: 60 },
     customerPhone: { type: String, required: true, match: /^[6-9]\d{9}$/ },
@@ -115,6 +119,22 @@ BookingSchema.index(
     partialFilterExpression: { status: { $in: [...SLOT_HOLDING_STATUSES] } },
   },
 );
+
+/**
+ * Overlap guard for half-hour slots: a multikey unique index over the cells a
+ * booking covers, so no two active bookings on a unit can share a 30-minute
+ * cell. The `$exists` filter lets the index build on databases that still hold
+ * bookings made before `cells` existed (the migration script backfills them).
+ */
+export const CELL_UNIQUE_INDEX = "unique_active_booking_per_cell";
+BookingSchema.index(
+  { unitId: 1, businessDate: 1, cells: 1 },
+  {
+    name: CELL_UNIQUE_INDEX,
+    unique: true,
+    partialFilterExpression: { status: { $in: [...SLOT_HOLDING_STATUSES] }, cells: { $exists: true } },
+  },
+);
 BookingSchema.index({ businessDate: 1, status: 1 });
 BookingSchema.index({ customerPhone: 1, startsAt: -1 });
 BookingSchema.index({ status: 1, createdAt: -1 });
@@ -122,7 +142,7 @@ export const BookingModel = defineModel("Booking", BookingSchema);
 
 // ---------- Blocked slot ----------
 
-/** An hour an admin has taken out of the booking grid (tournament, private event, repairs...). */
+/** A 30-minute cell an admin has taken out of the booking grid (tournament, private event, repairs...). */
 export interface BlockedSlot {
   unitId: Types.ObjectId;
   businessDate: string;
@@ -135,7 +155,7 @@ const BlockedSlotSchema = new Schema<BlockedSlot>(
   {
     unitId: { type: Schema.Types.ObjectId, ref: "Unit", required: true },
     businessDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
-    startHour: { type: Number, required: true, min: 0, max: 23 },
+    startHour: { type: Number, required: true, min: 0, max: 23.5 },
     reason: { type: String, required: true, trim: true, maxlength: 200 },
   },
   { timestamps: true },

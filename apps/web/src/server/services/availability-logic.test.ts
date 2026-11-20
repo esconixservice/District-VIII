@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   businessDateOf,
   currentSlot,
+  fitsInSession,
+  formatHour,
+  formatSlotRange,
   type OperatingHours,
+  slotCells,
   slotHours,
   slotStart,
 } from "@district-viii/shared";
@@ -35,10 +39,11 @@ const free = (id = "u1"): UnitState => ({
 const emptyIndex = new SlotIndex([], []);
 
 describe("business-day helpers (Asia/Kolkata)", () => {
-  it("lists 16 one-hour slots from 12 PM to 4 AM", () => {
-    expect(slotHours(HOURS)).toEqual([
-      12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3,
-    ]);
+  it("lists 32 half-hour slots from 12 PM to 4 AM", () => {
+    const hours = slotHours(HOURS);
+    expect(hours).toHaveLength(32);
+    expect(hours.slice(0, 4)).toEqual([12, 12.5, 13, 13.5]);
+    expect(hours.slice(-4)).toEqual([2, 2.5, 3, 3.5]);
   });
 
   it("puts slots between midnight and closing in the previous business day", () => {
@@ -57,6 +62,10 @@ describe("business-day helpers (Asia/Kolkata)", () => {
   it("finds the running slot, or null when closed", () => {
     expect(currentSlot(ist(20, 45), HOURS)).toEqual({
       businessDate: DATE,
+      startHour: 20.5,
+    });
+    expect(currentSlot(ist(20, 10), HOURS)).toEqual({
+      businessDate: DATE,
       startHour: 20,
     });
     expect(currentSlot(ist(27, 10), HOURS)).toEqual({
@@ -66,10 +75,30 @@ describe("business-day helpers (Asia/Kolkata)", () => {
     expect(currentSlot(ist(9), HOURS)).toBeNull();
   });
 
-  it("supports daytime-only hours and two-hour slots", () => {
-    expect(
-      slotHours({ openHour: 10, closeHour: 22, slotDurationHours: 2 }),
-    ).toEqual([10, 12, 14, 16, 18, 20]);
+  it("supports daytime-only hours (grid is always 30 minutes)", () => {
+    const hours = slotHours({ openHour: 10, closeHour: 13, slotDurationHours: 2 });
+    expect(hours).toEqual([10, 10.5, 11, 11.5, 12, 12.5]);
+  });
+
+  it("checks a booking fits before closing", () => {
+    expect(fitsInSession(3.5, 0.5, HOURS)).toBe(true);
+    expect(fitsInSession(3.5, 1, HOURS)).toBe(false);
+    expect(fitsInSession(3, 1, HOURS)).toBe(true);
+    expect(fitsInSession(11.5, 0.5, HOURS)).toBe(false); // before opening
+  });
+
+  it("maps bookings to clock-based half-hour cells", () => {
+    expect(slotCells(20, 1)).toEqual([40, 41]);
+    expect(slotCells(20.5, 0.5)).toEqual([41]);
+    expect(slotCells(23.5, 1)).toEqual([47, 0]);
+  });
+
+  it("formats half hours", () => {
+    expect(formatHour(20)).toBe("8 PM");
+    expect(formatHour(20.5)).toBe("8:30 PM");
+    expect(formatHour(0.5)).toBe("12:30 AM");
+    expect(formatSlotRange(20.5, 0.5)).toBe("8:30 PM – 9 PM");
+    expect(formatSlotRange(23.5, 1)).toBe("11:30 PM – 12:30 AM");
   });
 });
 
@@ -89,9 +118,9 @@ describe("slotState", () => {
     expect(state()).toBe("available");
   });
 
-  it("is past once the late-booking grace (30 min) has elapsed", () => {
-    expect(state({ now: ist(21, 29) })).toBe("available");
-    expect(state({ now: ist(21, 30) })).toBe("past");
+  it("is past once the late-booking grace (15 min) has elapsed", () => {
+    expect(state({ now: ist(21, 14) })).toBe("available");
+    expect(state({ now: ist(21, 15) })).toBe("past");
   });
 
   it("reports maintenance before bookings", () => {
@@ -115,6 +144,22 @@ describe("slotState", () => {
     );
     expect(state({ index: approved })).toBe("booked");
     expect(state({ index: pending })).toBe("pending");
+  });
+
+  it("holds both half hours of a 1-hour booking and only one of a 30-minute booking", () => {
+    const index = new SlotIndex(
+      [
+        { unitId: "u1", businessDate: DATE, startHour: 20, durationHours: 1, status: "approved" },
+        { unitId: "u1", businessDate: DATE, startHour: 22.5, durationHours: 0.5, status: "pending" },
+      ],
+      [],
+    );
+    expect(state({ index, startHour: 20 })).toBe("booked");
+    expect(state({ index, startHour: 20.5 })).toBe("booked");
+    expect(state({ index, startHour: 21 })).toBe("available");
+    expect(state({ index, startHour: 22 })).toBe("available");
+    expect(state({ index, startHour: 22.5 })).toBe("pending");
+    expect(state({ index, startHour: 23 })).toBe("available");
   });
 
   it("treats admin-blocked slots as busy", () => {
@@ -159,12 +204,12 @@ describe("slotState", () => {
       index: emptyIndex,
       now: ist(18),
     });
-    expect(slots).toHaveLength(16);
+    expect(slots).toHaveLength(32);
     expect(slots[0]).toMatchObject({ startHour: 12, state: "past" });
-    expect(slots[8]).toMatchObject({
-      startHour: 20,
+    expect(slots[17]).toMatchObject({
+      startHour: 20.5,
       state: "available",
-      startsAt: ist(20).toISOString(),
+      startsAt: ist(20, 30).toISOString(),
       endsAt: ist(21).toISOString(),
     });
   });
@@ -193,8 +238,9 @@ describe("summary and next free time", () => {
       ],
       [{ unitId: "u1", businessDate: DATE, startHour: 22 }],
     );
+    // 1-hour holds at 8 and 9 PM, a blocked 10:00 half hour: free from 10:30.
     expect(nextFreeAt(unit, HOURS, index, ist(20, 5))?.toISOString()).toBe(
-      ist(23).toISOString(),
+      ist(22, 30).toISOString(),
     );
   });
 

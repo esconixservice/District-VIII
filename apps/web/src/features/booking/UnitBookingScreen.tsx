@@ -3,6 +3,7 @@
 import {
   bookableDates,
   type BookingDto,
+  DEFAULT_BOOKING_DURATION,
   formatBusinessDate,
   formatSlotRange,
   type IsoDate,
@@ -24,7 +25,7 @@ import { useCustomerProfile } from "@/lib/customer-profile";
 import { BookingConfirmation } from "./BookingConfirmation";
 import { BookingForm, type SlotSelection } from "./BookingForm";
 import { DateTabs } from "./DateTabs";
-import { SlotGrid, SlotLegend } from "./SlotGrid";
+import { DurationToggle, SlotGrid, SlotLegend } from "./SlotGrid";
 import { UnitPicker } from "./UnitPicker";
 
 const UNIT_NOUN: Record<UnitType, string> = { pool: "table", ps5: "console" };
@@ -45,6 +46,7 @@ export function UnitBookingScreen({ type }: { type: UnitType }) {
   const [pickedDate, setPickedDate] = useState<IsoDate | null>(null);
   const [pickedUnitId, setPickedUnitId] = useState<string | null>(null);
   const [selection, setSelection] = useState<SlotSelection | null>(null);
+  const [durationHours, setDurationHours] = useState<number>(DEFAULT_BOOKING_DURATION);
   const [confirmed, setConfirmed] = useState<Confirmed | null>(null);
 
   const dates = settings.data && now ? bookableDates(now, settings.data, settings.data.bookingWindowDays) : null;
@@ -65,8 +67,9 @@ export function UnitBookingScreen({ type }: { type: UnitType }) {
       unitName: active.unit.name,
       businessDate: date,
       startHour: slot.startHour,
+      durationHours,
       dateLabel: formatBusinessDate(date, today),
-      timeLabel: formatSlotRange(slot.startHour, settings.data.slotDurationHours),
+      timeLabel: formatSlotRange(slot.startHour, durationHours),
     });
   };
 
@@ -78,7 +81,7 @@ export function UnitBookingScreen({ type }: { type: UnitType }) {
 
       <ScreenHeader
         title={UNIT_TYPE_LABELS[type]}
-        subtitle={`Pick a ${UNIT_NOUN[type]}, a day and an hour`}
+        subtitle={`Pick a ${UNIT_NOUN[type]}, a day and a time`}
         action={<LiveIndicator />}
       />
 
@@ -128,9 +131,18 @@ export function UnitBookingScreen({ type }: { type: UnitType }) {
               aria-label={`Hourly slots for ${active.unit.name}`}
               className="flex min-h-0 flex-1 flex-col rounded-card border border-white/10 bg-white/3 lg:min-h-[560px]"
             >
-              <div className="flex items-center justify-between px-4 pt-4 pb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 pb-2">
                 <h2 className="-skew-x-8 font-display text-xl text-white">{active.unit.name}</h2>
                 <SlotLegend />
+              </div>
+              <div className="px-4 pb-2">
+                <DurationToggle
+                  value={durationHours}
+                  onChange={(next) => {
+                    setDurationHours(next);
+                    setSelection(null);
+                  }}
+                />
               </div>
               {/* The only scrolling region on this screen. */}
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-1 pb-4">
@@ -142,7 +154,7 @@ export function UnitBookingScreen({ type }: { type: UnitType }) {
                   <SlotGrid
                     key={`${active.unit.id}-${date}`}
                     slots={active.slots}
-                    durationHours={settings.data.slotDurationHours}
+                    durationHours={durationHours}
                     openHour={settings.data.openHour}
                     selectedHour={selection?.unitId === active.unit.id && selection.businessDate === date ? selection.startHour : null}
                     onSelect={selectSlot}

@@ -1,14 +1,17 @@
 import "server-only";
 
 import {
+  BOOKING_DURATIONS,
   BOOKING_SORT_FIELDS,
   BOOKING_STATUSES,
   CUSTOMER_NAME_MAX,
   CUSTOMER_NAME_MIN,
   INDIAN_PHONE_PATTERN,
+  isBookingDuration,
   isValidIsoDate,
   normalizePhone,
   REASON_MAX,
+  SLOT_STEP_HOURS,
   UNIT_STATUSES,
   UNIT_TYPES,
 } from "@district-viii/shared";
@@ -48,6 +51,11 @@ const phone = z
 const isoDate = z.string().refine(isValidIsoDate, { error: "must be a YYYY-MM-DD date" });
 const objectIdString = z.string().regex(/^[a-f\d]{24}$/i, { error: "must be a valid id" });
 const hour = z.number().int().min(0).max(23);
+/** Slot start: a clock hour in half-hour steps, 0 to 23.5. */
+const slotHour = z.number().min(0).max(23.5).multipleOf(SLOT_STEP_HOURS, { error: "startHour must be on the hour or half hour" });
+const bookingDuration = z
+  .number()
+  .refine(isBookingDuration, { error: `durationHours must be one of ${BOOKING_DURATIONS.join(", ")}` });
 const queryInt = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
 // ---------- Bookings ----------
@@ -55,7 +63,8 @@ const queryInt = (min: number, max: number) => z.coerce.number().int().min(min).
 export const createBookingSchema = z.strictObject({
   unitId: objectIdString,
   businessDate: isoDate,
-  startHour: hour,
+  startHour: slotHour,
+  durationHours: bookingDuration.optional(),
   customerName: text(CUSTOMER_NAME_MIN, CUSTOMER_NAME_MAX, "customerName"),
   customerPhone: phone,
 });
@@ -113,7 +122,7 @@ export const updateUnitStatusSchema = z
 export const createBlockedSlotSchema = z.strictObject({
   unitId: objectIdString,
   businessDate: isoDate,
-  startHour: hour,
+  startHour: slotHour,
   reason: text(2, REASON_MAX, "reason"),
 });
 

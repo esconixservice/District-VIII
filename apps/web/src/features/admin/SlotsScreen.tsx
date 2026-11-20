@@ -4,6 +4,7 @@ import {
   type BlockedSlotDto,
   formatHour,
   formatSlotRange,
+  SLOT_STEP_HOURS,
   type IsoDate,
   type SlotDto,
   type SlotState,
@@ -116,7 +117,7 @@ export function SlotsScreen() {
             ) : !active ? (
               <p className="text-sm text-wine-ink/60">No active units of this type.</p>
             ) : (
-              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6" aria-label={`Hours for ${active.unit.name}`}>
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6" aria-label={`Half-hour slots for ${active.unit.name}`}>
                 {active.slots.map((slot, index) => {
                   const block = blockedByHour.get(slot.startHour);
                   const state: SlotState | "blocked" = block && slot.state !== "past" ? "blocked" : slot.state;
@@ -132,7 +133,7 @@ export function SlotsScreen() {
                         type="button"
                         disabled={!clickable}
                         onClick={() => setEditing(block ? { kind: "blocked", blocked: block } : { kind: "block", slot })}
-                        aria-label={`${formatSlotRange(slot.startHour, settings?.slotDurationHours ?? 1)}: ${CELL_LABEL[state]}${block ? `, ${block.reason}` : ""}`}
+                        aria-label={`${formatSlotRange(slot.startHour, SLOT_STEP_HOURS)}: ${CELL_LABEL[state]}${block ? `, ${block.reason}` : ""}`}
                         className={`flex h-20 w-full flex-col items-start justify-between rounded-2xl border p-3 text-left transition-[box-shadow,border-color,background-color,transform] duration-150 outline-none focus-visible:ring-2 focus-visible:ring-burgundy active:scale-[0.97] disabled:cursor-default disabled:active:scale-100 ${CELL_STYLE[state]}`}
                       >
                         <span className="text-sm font-extrabold">{formatHour(slot.startHour)}</span>
@@ -153,7 +154,7 @@ export function SlotsScreen() {
               {[
                 ["Opens", formatHour(settings.openHour)],
                 ["Closes", formatHour(settings.closeHour)],
-                ["Slot length", `${settings.slotDurationHours} hour${settings.slotDurationHours > 1 ? "s" : ""}`],
+                ["Slot length", "30 minutes"],
                 ["Booking window", `${settings.bookingWindowDays} days`],
               ].map(([term, value]) => (
                 <div key={term} className="flex justify-between">
@@ -175,7 +176,7 @@ export function SlotsScreen() {
         </AdminCard>
       </div>
 
-      <SlotModal editing={editing} unitId={active?.unit.id} unitName={active?.unit.name} date={date} durationHours={settings?.slotDurationHours ?? 1} onClose={() => setEditing(null)} />
+      <SlotModal editing={editing} unitId={active?.unit.id} unitName={active?.unit.name} date={date} durationHours={SLOT_STEP_HOURS} onClose={() => setEditing(null)} />
     </div>
   );
 }
@@ -200,7 +201,7 @@ function SlotModal({
     <Modal
       open={editing !== null}
       onClose={onClose}
-      title={editing?.kind === "blocked" ? "Blocked hour" : "Block this hour"}
+      title={editing?.kind === "blocked" ? "Blocked slot" : "Block this half hour"}
       description={hour !== undefined ? `${unitName ?? ""} · ${formatSlotRange(hour, durationHours)}` : undefined}
     >
       {editing && unitId && date && (

@@ -2,7 +2,7 @@
  * Wipes and reseeds the database at MONGODB_URI with demo data and the admin
  * account. Run with `npm run seed` (reads apps/web/.env.local).
  */
-import { addDays, type BookingStatus, businessDateOf, isSlotPast, slotHours, slotStart } from "@district-viii/shared";
+import { addDays, type BookingStatus, businessDateOf, isSlotPast, slotCells, slotHours, slotStart } from "@district-viii/shared";
 import { loadEnvConfig } from "@next/env";
 import { hashPassword } from "@/server/auth";
 import { connectDb, disconnectDb } from "@/server/db";
@@ -88,7 +88,7 @@ async function seed(): Promise<void> {
     const random = createRandom(8);
     const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T;
     const phoneFor = (index: number) => `9${String(846_000_000 + index * 7_919).padStart(9, "0")}`;
-    const weighted = slotHours(hours).flatMap((hour) => Array<number>(SEED_HOUR_WEIGHTS[hour] ?? 1).fill(hour));
+    const weighted = slotHours(hours).filter((hour) => Number.isInteger(hour)).flatMap((hour) => Array<number>(SEED_HOUR_WEIGHTS[hour] ?? 1).fill(hour));
     const today = businessDateOf(now, hours);
     const used = new Set<string>();
     const docs: Partial<Booking>[] = [];
@@ -105,7 +105,8 @@ async function seed(): Promise<void> {
         unitType: unit.type,
         businessDate,
         startHour,
-        durationHours: hours.slotDurationHours,
+        durationHours: 1,
+        cells: slotCells(startHour, 1),
         startsAt,
         customerName: SEED_CUSTOMERS[customer],
         customerPhone: phoneFor(customer),

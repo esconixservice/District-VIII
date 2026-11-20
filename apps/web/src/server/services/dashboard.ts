@@ -93,6 +93,11 @@ export async function estimatedSalesLastSevenDays(): Promise<DailyEstimatedSales
   });
 }
 
+/** Longest booking the schema allows, in hours. */
+const MAX_BOOKING_HOURS = 4;
+/** Aggregation expression for a booking's end instant. */
+const bookingEnd = { $add: ["$startsAt", { $multiply: [{ $ifNull: ["$durationHours", 1] }, HOUR_MS] }] };
+
 function countBy<TKey>(pipeline: PipelineStage[]): Promise<{ _id: TKey; count: number }[]> {
   return BookingModel.aggregate<{ _id: TKey; count: number }>(pipeline).exec();
 }
@@ -134,14 +139,24 @@ export async function dashboardStats(): Promise<DashboardStatsDto> {
           {
             $match: {
               status: "pending",
-              startsAt: { $gt: new Date(at.getTime() - settings.slotDurationHours * HOUR_MS) },
+              // Cheap index-friendly prefilter (no booking is longer than 4 h), then the exact end time.
+              startsAt: { $gt: new Date(at.getTime() - MAX_BOOKING_HOURS * HOUR_MS) },
+              $expr: { $gt: [bookingEnd, at] },
             },
           },
           { $count: "count" },
         ],
+        // Approved bookings running right now (start <= now < end), whatever their length.
         inUse: slot
           ? [
-              { $match: { businessDate: slot.businessDate, startHour: slot.startHour, status: "approved" } },
+              {
+                $match: {
+                  businessDate: slot.businessDate,
+                  status: "approved",
+                  startsAt: { $lte: at },
+                  $expr: { $gt: [bookingEnd, at] },
+                },
+              },
               { $group: { _id: "$unitId" } },
             ]
           : [{ $match: { _id: null } }], // closed: no slot is running, so nothing is in use
@@ -190,15 +205,15 @@ export async function bookingsPerDay(days: number): Promise<BookingsPerDayPoint[
   });
 }
 
-/** Requested (pending or approved) bookings per start hour, in session order. */
+/** Requested (pending or approved) bookings per start hour, in session order. 8:30 counts toward 8 PM. */
 export async function peakHours(days: number): Promise<PeakHourPoint[]> {
   const { today, from } = await range(days);
   const rows = await countBy<number>([
     { $match: { businessDate: { $gte: from, $lte: today }, status: { $in: [...SLOT_HOLDING_STATUSES] } } },
-    { $group: { _id: "$startHour", count: { $sum: 1 } } },
+    { $group: { _id: { $floor: "$startHour" }, count: { $sum: 1 } } },
   ]);
   const counts = new Map(rows.map((row) => [row._id, row.count]));
-  const order = slotHours(await getSettings());
+  const order = slotHours(await getSettings()).filter((hour) => Number.isInteger(hour));
   // Keep hours that had bookings before the operating hours changed.
   for (const hour of counts.keys()) if (!order.includes(hour)) order.push(hour);
   return order.map((hour) => ({ hour, count: counts.get(hour) ?? 0 }));
